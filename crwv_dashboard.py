@@ -91,9 +91,9 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
                 interest = max(0, outstanding * finance_rate)
             net_cf = rev - opex - debt
         else:
-            # Extension / recontracting years — no debt
+            # Extension / recontracting years — no debt, opex flat from contract period
             rev = total_annual_rev * ext_rev_pct
-            opex = rev * opex_pct
+            opex = total_annual_rev * opex_pct  # flat: same $ as steady-state contract years
             debt = 0
             interest = 0
             net_cf = rev - opex
