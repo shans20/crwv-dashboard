@@ -520,25 +520,4 @@ with st.expander("Detailed Cash Flow Table"):
         )
     st.markdown("\n".join(rows))
 
-with st.expander("Key IR Quotes"):
-    st.markdown("""
-**Payback period (IR team):** *"Two and a half to three years is what we've typically called out as the payback period."*
-
-**Prepay (IR team):** *"15 to 25% average prepayment when we called out that cash payback period."*
-
-**Contribution margin (IR team):** *"Mid 20s contribution margin from the contract."*
-
-**Long-term EBIT (IR team):** *"Long term adjusted margin of 25 to 30%... cross sell of Weights & Biases, inference products, monetization of the cloud stack."*
-
-**Storage parity (CEO):** *"I am 12 to 15% of the GPU market. I'm 0.1% of the storage market. My goal over the next five years is to bring those things to parity."*
-
-**Storage growth (IR team):** *"Storage business goes from being $100 million revenue business to a $300 million revenue business in a year."*
-
-**Recontracting (IR team):** *"ASP for Ampere went up in 2025, Hopper stayed within 10% of starting price."*
-
-**CPU cloud (CEO):** *"We saw reinforcement learning coming... incredibly reliant on CPU compute. Agentic workload is incredibly reliant on CPU compute."*
-
-**Goodput premium (CEO):** *"You buy 100 GPUs, you get 80. With us, you buy 100 GPUs, you get 92."*
-    """)
-
-st.caption("Model: Shan's CRWV contract anatomy model | Sources: CoreWeave IR (Mar 2026), SemiAnalysis, Arete Research")
+st.caption("Model: Shan's CRWV contract anatomy model")
