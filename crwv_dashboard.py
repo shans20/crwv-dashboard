@@ -33,12 +33,13 @@ st.caption(f"CoreWeave per-GW economics model  |  {datetime.now().strftime('%Y-%
 # ============================================================
 # MODEL ENGINE
 # ============================================================
-def compute_model(gpu_hr, gpus_per_gw_k, prepay_pct, finance_rate, opex_pct,
+def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_rate, opex_pct,
                   yr1_ramp, ext_rev_pct, share_count_mn,
-                  storage_pct, software_pct, n_gw=1.0, interest_only=False):
+                  storage_pct, software_pct, n_gw=1.0, interest_only=False,
+                  contract_yrs=5, total_yrs=8):
     """Compute per-GW cash flow model."""
     gpus_per_gw = gpus_per_gw_k * 1000
-    capex_per_gpu = 60_000  # $60K per GPU
+    capex_per_gpu = capex_per_gpu_k * 1000  # slider in $K, convert to $
     capex = gpus_per_gw * capex_per_gpu / 1e9 * n_gw  # $Bn
 
     base_annual_rev = gpu_hr * 8760 * gpus_per_gw / 1e9 * n_gw  # $Bn (GPU only)
@@ -46,59 +47,51 @@ def compute_model(gpu_hr, gpus_per_gw_k, prepay_pct, finance_rate, opex_pct,
     software_rev = base_annual_rev * software_pct
     total_annual_rev = base_annual_rev + storage_rev + software_rev
 
-    tcv = total_annual_rev * 5  # 5-year contract
+    tcv = total_annual_rev * contract_yrs
     prepay = tcv * prepay_pct
     amt_financed = capex - prepay
 
-    # Debt service
+    # Debt service (amortized over contract length)
     if interest_only:
         annual_interest = amt_financed * finance_rate
-        annual_principal = amt_financed / 5
-        annual_pmt = annual_interest + annual_principal  # simplified: equal principal + declining interest
+        annual_principal = amt_financed / contract_yrs
+        annual_pmt = annual_interest + annual_principal
     else:
-        # Fully amortizing
         if finance_rate > 0 and amt_financed > 0:
-            annual_pmt = amt_financed * (finance_rate * (1 + finance_rate)**5) / ((1 + finance_rate)**5 - 1)
+            n = contract_yrs
+            annual_pmt = amt_financed * (finance_rate * (1 + finance_rate)**n) / ((1 + finance_rate)**n - 1)
         else:
-            annual_pmt = amt_financed / 5
+            annual_pmt = amt_financed / contract_yrs
+
+    ext_yrs = total_yrs - contract_yrs  # how many extension years
 
     years = []
     cumulative_cf = 0
 
-    for yr in range(0, 9):
+    for yr in range(0, total_yrs + 1):  # yr 0 through total_yrs
         if yr == 0:
             rev = 0
             opex = 0
             debt = 0
             net_cf = -capex + prepay
             interest = 0
-        elif yr == 1:
-            rev = total_annual_rev * yr1_ramp
+        elif yr <= contract_yrs:
+            # Contract years
+            rev = total_annual_rev * (yr1_ramp if yr == 1 else 1.0)
             opex = rev * opex_pct
             if interest_only:
-                remaining = amt_financed * (1 - (yr - 1) / 5)
+                remaining = amt_financed * (1 - (yr - 1) / contract_yrs)
                 interest = remaining * finance_rate
-                debt = amt_financed / 5 + interest
+                debt = amt_financed / contract_yrs + interest
             else:
                 debt = annual_pmt
-                interest = amt_financed * finance_rate  # approx yr1
-            net_cf = rev - opex - debt
-        elif yr <= 5:
-            rev = total_annual_rev
-            opex = rev * opex_pct
-            if interest_only:
-                remaining = amt_financed * (1 - (yr - 1) / 5)
-                interest = remaining * finance_rate
-                debt = amt_financed / 5 + interest
-            else:
-                debt = annual_pmt
-                # approximate interest for display
                 outstanding = amt_financed
                 for i in range(1, yr):
                     outstanding -= (annual_pmt - outstanding * finance_rate)
                 interest = max(0, outstanding * finance_rate)
             net_cf = rev - opex - debt
-        else:  # extension years 6-8
+        else:
+            # Extension / recontracting years — no debt
             rev = total_annual_rev * ext_rev_pct
             opex = rev * opex_pct
             debt = 0
@@ -106,11 +99,18 @@ def compute_model(gpu_hr, gpus_per_gw_k, prepay_pct, finance_rate, opex_pct,
             net_cf = rev - opex
 
         cumulative_cf += net_cf
-        cf_per_share = net_cf / share_count_mn * 1000  # $/share
+        cf_per_share = net_cf / share_count_mn * 1000
+
+        if yr <= contract_yrs:
+            label = f"Yr {yr}"
+        elif yr == contract_yrs + 1:
+            label = f"Yr {yr} ext"
+        else:
+            label = f"Yr {yr} re"
 
         years.append({
             "year": yr,
-            "label": f"Yr {yr}" if yr <= 5 else f"Yr {yr} ext" if yr == 6 else f"Yr {yr} re",
+            "label": label,
             "revenue": rev,
             "opex": opex,
             "interest": interest,
@@ -129,13 +129,13 @@ def compute_model(gpu_hr, gpus_per_gw_k, prepay_pct, finance_rate, opex_pct,
             payback = (i - 1) + (-prev) / (curr - prev)
             break
 
-    # Profit metrics (5-year contract period)
-    profit_5yr = sum(y["net_cf"] for y in years[:6])  # yr0-yr5
-    return_5yr = profit_5yr / capex if capex > 0 else 0
-    take_rate = return_5yr / 5
+    # Profit metrics (contract period only)
+    profit_contract = sum(y["net_cf"] for y in years[:contract_yrs + 1])  # yr0 through contract end
+    return_contract = profit_contract / capex if capex > 0 else 0
+    take_rate = return_contract / contract_yrs
 
     # Interest as % of TCV
-    total_interest = sum(y["interest"] for y in years[:6])
+    total_interest = sum(y["interest"] for y in years[:contract_yrs + 1])
     interest_pct_tcv = total_interest / tcv if tcv > 0 else 0
 
     # Revenue breakdown
@@ -157,8 +157,10 @@ def compute_model(gpu_hr, gpus_per_gw_k, prepay_pct, finance_rate, opex_pct,
         "storage_rev": storage_rev_annual,
         "software_rev": software_rev_annual,
         "payback": payback,
-        "profit_5yr": profit_5yr,
-        "return_5yr": return_5yr,
+        "profit_contract": profit_contract,
+        "return_contract": return_contract,
+        "contract_yrs": contract_yrs,
+        "total_yrs": total_yrs,
         "take_rate": take_rate,
         "interest_pct_tcv": interest_pct_tcv,
         "contribution_margin": contribution_margin,
@@ -175,6 +177,9 @@ st.sidebar.caption("Override contract assumptions to model scenarios")
 st.sidebar.markdown("### Contract Economics")
 gpu_hr = st.sidebar.slider("GPU/hr ($)", 1.50, 8.00, 3.30, 0.10)
 gpus_per_gw_k = st.sidebar.slider("GPUs per GW (thousands)", 300, 1000, 600, 50)
+capex_per_gpu_k = st.sidebar.slider("NVIDIA Capex per GPU ($K)", 30, 120, 60, 5)
+contract_yrs = st.sidebar.slider("Contract Length (yrs)", 3, 8, 5, 1)
+total_yrs = st.sidebar.slider("Total Asset Life (yrs)", contract_yrs, 10, max(contract_yrs, 8), 1)
 prepay_pct = st.sidebar.slider("Prepay % of TCV", 0.10, 0.35, 0.20, 0.01)
 finance_rate = st.sidebar.slider("Finance Rate (%)", 3.0, 12.0, 7.0, 0.25)
 finance_rate_dec = finance_rate / 100
@@ -199,6 +204,7 @@ n_gw = st.sidebar.slider("GW Deployed", 0.5, 10.0, 1.0, 0.5)
 model = compute_model(
     gpu_hr=gpu_hr,
     gpus_per_gw_k=gpus_per_gw_k,
+    capex_per_gpu_k=capex_per_gpu_k,
     prepay_pct=prepay_pct,
     finance_rate=finance_rate_dec,
     opex_pct=opex_pct,
@@ -209,6 +215,8 @@ model = compute_model(
     software_pct=software_pct,
     n_gw=n_gw,
     interest_only=interest_only,
+    contract_yrs=contract_yrs,
+    total_yrs=total_yrs,
 )
 
 # ============================================================
@@ -220,7 +228,7 @@ c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Revenue/GW", f"${model['annual_rev']/n_gw:.1f}B", f"TCV: ${model['tcv']:.1f}B")
 c2.metric("Payback Period", f"{model['payback']:.1f} yrs" if model['payback'] else "N/A",
           f"IR guide: 2.5-3.0 yrs")
-c3.metric("5yr Return", f"{model['return_5yr']:.0%}", f"Profit: ${model['profit_5yr']:.1f}B")
+c3.metric(f"{contract_yrs}yr Return", f"{model['return_contract']:.0%}", f"Profit: ${model['profit_contract']:.1f}B")
 c4.metric("Take Rate", f"{model['take_rate']:.1%}", f"per yr on capex")
 c5.metric("Interest/TCV", f"{model['interest_pct_tcv']:.1%}", f"IR deck: ~8%")
 c6.metric("Avg CF/Share", f"${sum(y['cf_per_share'] for y in model['years'])/len(model['years']):.2f}",
@@ -380,8 +388,9 @@ with col_payback_sens:
     for rate in rates:
         row = []
         for price in gpu_prices:
-            m = compute_model(price, gpus_per_gw_k, prepay_pct, rate/100, opex_pct,
-                              yr1_ramp, ext_rev_pct, share_count, storage_pct, software_pct)
+            m = compute_model(price, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, rate/100, opex_pct,
+                              yr1_ramp, ext_rev_pct, share_count, storage_pct, software_pct,
+                              contract_yrs=contract_yrs, total_yrs=total_yrs)
             row.append(round(m["payback"], 1) if m["payback"] else 10.0)
         z_payback.append(row)
 
@@ -404,15 +413,16 @@ with col_payback_sens:
     st.plotly_chart(fig_pb, use_container_width=True)
 
 with col_return_sens:
-    st.subheader("5yr Return Sensitivity")
+    st.subheader(f"{contract_yrs}yr Return Sensitivity")
 
     z_return = []
     for rate in rates:
         row = []
         for price in gpu_prices:
-            m = compute_model(price, gpus_per_gw_k, prepay_pct, rate/100, opex_pct,
-                              yr1_ramp, ext_rev_pct, share_count, storage_pct, software_pct)
-            row.append(round(m["return_5yr"] * 100, 0))
+            m = compute_model(price, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, rate/100, opex_pct,
+                              yr1_ramp, ext_rev_pct, share_count, storage_pct, software_pct,
+                              contract_yrs=contract_yrs, total_yrs=total_yrs)
+            row.append(round(m["return_contract"] * 100, 0))
         z_return.append(row)
 
     fig_ret = go.Figure(go.Heatmap(
@@ -489,7 +499,7 @@ st.sidebar.metric("TCV (5yr)", f"${model['tcv']:.1f}B")
 st.sidebar.metric("Amt Financed", f"${model['amt_financed']:.1f}B")
 st.sidebar.metric("Annual Revenue", f"${model['annual_rev']:.1f}B")
 st.sidebar.metric("Payback", f"{model['payback']:.1f} yrs" if model['payback'] else "N/A")
-st.sidebar.metric("5yr Profit", f"${model['profit_5yr']:.1f}B")
+st.sidebar.metric(f"{contract_yrs}yr Profit", f"${model['profit_contract']:.1f}B")
 st.sidebar.metric("Take Rate", f"{model['take_rate']:.1%}")
 
 # ============================================================
