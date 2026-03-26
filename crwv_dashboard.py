@@ -337,7 +337,6 @@ with col_rev:
 
     # Platform parity quote
     gpu_pct = model["gpu_rev"] / model["annual_rev"] * 100 if model["annual_rev"] > 0 else 100
-    st.info(f'GPU: {gpu_pct:.0f}% of revenue | CEO: *"I am 12-15% of the GPU market, 0.1% of storage. My goal is to bring those to parity."*')
 
 with col_waterfall:
     st.subheader("Contract Economics Waterfall (per GW, annual)")
@@ -372,7 +371,6 @@ with col_waterfall:
     st.plotly_chart(fig_wf, use_container_width=True)
 
     contribution = (1 - opex_pct) * 100
-    st.info(f"Contribution margin: {contribution:.0f}% | IR guided: mid-20s")
 
 # ============================================================
 # ROW 3: Sensitivity Heatmaps
