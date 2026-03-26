@@ -223,15 +223,16 @@ model = compute_model(
 # TOP METRICS
 # ============================================================
 st.markdown("---")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 
-c1.metric("Capex/GW", f"${model['capex']/n_gw:.1f}B", f"Revenue/GW: ${model['annual_rev']/n_gw:.1f}B")
-c2.metric("Payback Period", f"{model['payback']:.1f} yrs" if model['payback'] else "N/A",
+c1.metric("Capex/GW", f"${model['capex']/n_gw:.1f}B")
+c2.metric("Revenue/GW", f"${model['annual_rev']/n_gw:.1f}B", f"TCV: ${model['tcv']:.1f}B")
+c3.metric("Payback Period", f"{model['payback']:.1f} yrs" if model['payback'] else "N/A",
           f"IR guide: 2.5-3.0 yrs")
-c3.metric(f"{contract_yrs}yr Return", f"{model['return_contract']:.0%}", f"Profit: ${model['profit_contract']:.1f}B")
-c4.metric("Take Rate", f"{model['take_rate']:.1%}", f"per yr on capex")
-c5.metric("Interest/TCV", f"{model['interest_pct_tcv']:.1%}", f"IR deck: ~8%")
-c6.metric("Avg CF/Share", f"${sum(y['cf_per_share'] for y in model['years'])/len(model['years']):.2f}",
+c4.metric(f"{total_yrs}yr Return", f"{model['return_contract']:.0%}", f"Profit: ${model['profit_contract']:.1f}B")
+c5.metric("Take Rate", f"{model['take_rate']:.1%}", f"per yr on capex")
+c6.metric("Interest/TCV", f"{model['interest_pct_tcv']:.1%}", f"IR deck: ~8%")
+c7.metric("Avg CF/Share", f"${sum(y['cf_per_share'] for y in model['years'])/len(model['years']):.2f}",
           f"{n_gw:.1f} GW deployed")
 
 # ============================================================
