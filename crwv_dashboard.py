@@ -225,7 +225,7 @@ model = compute_model(
 st.markdown("---")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 
-c1.metric("Revenue/GW", f"${model['annual_rev']/n_gw:.1f}B", f"TCV: ${model['tcv']:.1f}B")
+c1.metric("Capex/GW", f"${model['capex']/n_gw:.1f}B", f"Revenue/GW: ${model['annual_rev']/n_gw:.1f}B")
 c2.metric("Payback Period", f"{model['payback']:.1f} yrs" if model['payback'] else "N/A",
           f"IR guide: 2.5-3.0 yrs")
 c3.metric(f"{contract_yrs}yr Return", f"{model['return_contract']:.0%}", f"Profit: ${model['profit_contract']:.1f}B")
