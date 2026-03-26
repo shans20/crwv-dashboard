@@ -129,10 +129,10 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
             payback = (i - 1) + (-prev) / (curr - prev)
             break
 
-    # Profit metrics (contract period only)
-    profit_contract = sum(y["net_cf"] for y in years[:contract_yrs + 1])  # yr0 through contract end
+    # Profit metrics (full asset life including extensions)
+    profit_contract = sum(y["net_cf"] for y in years)  # yr0 through total_yrs
     return_contract = profit_contract / capex if capex > 0 else 0
-    take_rate = return_contract / contract_yrs
+    take_rate = return_contract / total_yrs
 
     # Interest as % of TCV
     total_interest = sum(y["interest"] for y in years[:contract_yrs + 1])
