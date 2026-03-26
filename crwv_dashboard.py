@@ -489,6 +489,166 @@ with col_rev_proj:
     st.plotly_chart(fig_rev_p, use_container_width=True)
 
 # ============================================================
+# ROW 5: Multi-GW Debt Cohort Model
+# ============================================================
+st.markdown("---")
+st.subheader("Multi-GW Debt & Leverage Trajectory")
+
+# Per-GW economics from current scenario
+capex_per_gw = model["capex"] / n_gw
+prepay_per_gw = model["prepay"] / n_gw
+financed_per_gw = model["amt_financed"] / n_gw
+annual_pmt_per_gw = model["annual_pmt"] / n_gw
+
+# Build vintage list: each incremental GW addition is a "cohort"
+vintages = []
+for i in range(len(gw_proj)):
+    incr = gw_proj[i] if i == 0 else max(0, gw_proj[i] - gw_proj[i - 1])
+    if incr > 0.01:
+        vintages.append({
+            "deploy_idx": i,
+            "label": years_proj[i],
+            "gw": incr,
+            "initial_debt": incr * financed_per_gw,
+        })
+
+# For each projection year, compute outstanding debt per vintage
+cohort_data = []
+for i in range(len(gw_proj)):
+    vintage_debts = []
+    for v in vintages:
+        age = i - v["deploy_idx"]
+        if age < 0:
+            outstanding = 0.0
+        elif age == 0:
+            # Deployed this year — full debt outstanding
+            outstanding = v["initial_debt"]
+        elif age <= contract_yrs:
+            if interest_only:
+                # Linear principal paydown
+                outstanding = v["initial_debt"] * (1 - age / contract_yrs)
+            else:
+                # Amortizing: track remaining balance year by year
+                bal = v["initial_debt"]
+                pmt = v["gw"] * annual_pmt_per_gw  # this vintage's annual payment
+                for _ in range(age):
+                    int_yr = bal * finance_rate_dec
+                    princ_yr = pmt - int_yr
+                    bal = max(0.0, bal - princ_yr)
+                outstanding = bal
+        else:
+            outstanding = 0.0
+        vintage_debts.append(outstanding)
+
+    total_debt = sum(vintage_debts)
+    ebitda = gw_proj[i] * rev_per_gw * (1 - opex_pct)
+    leverage = total_debt / ebitda if ebitda > 0.01 else 0
+
+    cohort_data.append({
+        "year": years_proj[i],
+        "vintage_debts": vintage_debts,
+        "total_debt": total_debt,
+        "ebitda": ebitda,
+        "leverage": leverage,
+        "new_debt": vintages[len([v for v in vintages if v["deploy_idx"] == i])]["initial_debt"]
+                    if any(v["deploy_idx"] == i for v in vintages) else 0,
+    })
+
+col_debt, col_lev = st.columns(2)
+
+with col_debt:
+    fig_debt = go.Figure()
+
+    # Stacked bars by vintage
+    vintage_colors = ["#58a6ff", "#3fb950", "#bc8cff", "#d29922", "#f85149", "#8b949e"]
+    for vi, v in enumerate(vintages):
+        y_vals = [cd["vintage_debts"][vi] for cd in cohort_data]
+        fig_debt.add_trace(go.Bar(
+            x=years_proj, y=y_vals,
+            name=f"{v['label']} ({v['gw']:.1f} GW)",
+            marker_color=vintage_colors[vi % len(vintage_colors)],
+        ))
+
+    # Total debt line overlay
+    fig_debt.add_trace(go.Scatter(
+        x=years_proj,
+        y=[cd["total_debt"] for cd in cohort_data],
+        mode="lines+markers+text",
+        text=[f"${cd['total_debt']:.0f}B" for cd in cohort_data],
+        textposition="top center",
+        line=dict(color="#f0f6fc", width=2, dash="dot"),
+        marker=dict(size=8, color="#f0f6fc"),
+        name="Total Debt",
+    ))
+
+    fig_debt.update_layout(
+        title="Gross Debt Outstanding by Vintage",
+        barmode="stack",
+        height=420, margin=dict(t=50, b=20, l=20, r=20),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#c9d1d9"),
+        yaxis=dict(gridcolor="#21262d", title="$ Billions"),
+        xaxis=dict(gridcolor="#21262d"),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+    )
+    st.plotly_chart(fig_debt, use_container_width=True)
+
+with col_lev:
+    fig_lev = go.Figure()
+
+    # EBITDA bars
+    fig_lev.add_trace(go.Bar(
+        x=years_proj,
+        y=[cd["ebitda"] for cd in cohort_data],
+        text=[f"${cd['ebitda']:.1f}B" for cd in cohort_data],
+        textposition="outside",
+        marker_color="#3fb950",
+        name="EBITDA",
+        yaxis="y",
+    ))
+
+    # Leverage line on secondary axis
+    fig_lev.add_trace(go.Scatter(
+        x=years_proj,
+        y=[cd["leverage"] for cd in cohort_data],
+        mode="lines+markers+text",
+        text=[f"{cd['leverage']:.1f}x" for cd in cohort_data],
+        textposition="top center",
+        line=dict(color="#f85149", width=3),
+        marker=dict(size=10, color="#f85149"),
+        name="Debt / EBITDA",
+        yaxis="y2",
+    ))
+
+    fig_lev.update_layout(
+        title="EBITDA & Leverage (Debt / EBITDA)",
+        height=420, margin=dict(t=50, b=20, l=20, r=60),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#c9d1d9"),
+        yaxis=dict(gridcolor="#21262d", title="$ Billions", side="left"),
+        yaxis2=dict(title="Debt/EBITDA (x)", overlaying="y", side="right",
+                    gridcolor="rgba(0,0,0,0)", showgrid=False),
+        xaxis=dict(gridcolor="#21262d"),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+    )
+    st.plotly_chart(fig_lev, use_container_width=True)
+
+# Summary table
+with st.expander("Debt Cohort Detail"):
+    debt_header = "| Year | Active GW | New GW | New Debt | Total Debt | EBITDA | Debt/EBITDA |"
+    debt_sep = "|------|-----------|--------|----------|------------|--------|-------------|"
+    debt_rows = [debt_header, debt_sep]
+    for i, cd in enumerate(cohort_data):
+        new_gw = gw_proj[i] if i == 0 else max(0, gw_proj[i] - gw_proj[i - 1])
+        new_debt = new_gw * financed_per_gw
+        debt_rows.append(
+            f"| {cd['year']} | {gw_proj[i]:.1f} | {new_gw:.2f} | "
+            f"${new_debt:.1f}B | ${cd['total_debt']:.1f}B | "
+            f"${cd['ebitda']:.1f}B | {cd['leverage']:.1f}x |"
+        )
+    st.markdown("\n".join(debt_rows))
+
+# ============================================================
 # SIDEBAR: Scenario Results
 # ============================================================
 st.sidebar.markdown("---")
