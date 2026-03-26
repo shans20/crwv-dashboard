@@ -198,6 +198,10 @@ st.sidebar.markdown("### Corporate")
 share_count = st.sidebar.slider("Share Count (mn)", 400, 700, 530, 10)
 n_gw = st.sidebar.slider("GW Deployed", 0.5, 10.0, 1.0, 0.5)
 
+st.sidebar.markdown("### Debt Trajectory")
+current_debt_bn = st.sidebar.slider("Current Gross Debt ($B)", 5.0, 80.0, 29.8, 0.5)
+capex_lead_yrs = st.sidebar.slider("Capex Lead Time (yrs)", 0, 2, 1, 1)
+
 # ============================================================
 # RUN MODEL
 # ============================================================
@@ -489,69 +493,80 @@ with col_rev_proj:
     st.plotly_chart(fig_rev_p, use_container_width=True)
 
 # ============================================================
-# ROW 5: Multi-GW Debt Cohort Model
+# ROW 5: Multi-GW Debt Cohort Model (anchored to actual B/S)
 # ============================================================
 st.markdown("---")
 st.subheader("Multi-GW Debt & Leverage Trajectory")
 
 # Per-GW economics from current scenario
 capex_per_gw = model["capex"] / n_gw
-prepay_per_gw = model["prepay"] / n_gw
 financed_per_gw = model["amt_financed"] / n_gw
 annual_pmt_per_gw = model["annual_pmt"] / n_gw
 
-# Build vintage list: each incremental GW addition is a "cohort"
+# Build vintage list with capex lead time
+# Debt is drawn capex_lead_yrs before GW goes active
 vintages = []
 for i in range(len(gw_proj)):
     incr = gw_proj[i] if i == 0 else max(0, gw_proj[i] - gw_proj[i - 1])
     if incr > 0.01:
         vintages.append({
             "deploy_idx": i,
+            "draw_idx": max(0, i - capex_lead_yrs),
             "label": years_proj[i],
             "gw": incr,
             "initial_debt": incr * financed_per_gw,
         })
 
-# For each projection year, compute outstanding debt per vintage
+# Modeled 2025 debt = everything drawn by year 0
+modeled_2025 = sum(v["initial_debt"] for v in vintages if v["draw_idx"] <= 0)
+
+# Legacy debt = actual balance sheet - modeled (pre-financed pipeline + working capital)
+legacy_debt = max(0, current_debt_bn - modeled_2025)
+has_legacy = legacy_debt > 0.1
+
+# For each projection year, compute outstanding debt per vintage + legacy
 cohort_data = []
 for i in range(len(gw_proj)):
     vintage_debts = []
     for v in vintages:
-        age = i - v["deploy_idx"]
-        if age < 0:
-            outstanding = 0.0
-        elif age == 0:
-            # Deployed this year — full debt outstanding
-            outstanding = v["initial_debt"]
-        elif age <= contract_yrs:
-            if interest_only:
-                # Linear principal paydown
-                outstanding = v["initial_debt"] * (1 - age / contract_yrs)
-            else:
-                # Amortizing: track remaining balance year by year
-                bal = v["initial_debt"]
-                pmt = v["gw"] * annual_pmt_per_gw  # this vintage's annual payment
-                for _ in range(age):
-                    int_yr = bal * finance_rate_dec
-                    princ_yr = pmt - int_yr
-                    bal = max(0.0, bal - princ_yr)
-                outstanding = bal
+        if i < v["draw_idx"]:
+            outstanding = 0.0  # not yet drawn
+        elif i < v["deploy_idx"]:
+            outstanding = v["initial_debt"]  # drawn but not active, no paydown
+        elif i == v["deploy_idx"]:
+            outstanding = v["initial_debt"]  # just activated, paydown starts next yr
         else:
-            outstanding = 0.0
+            age_active = i - v["deploy_idx"]
+            if age_active <= contract_yrs:
+                if interest_only:
+                    outstanding = v["initial_debt"] * (1 - age_active / contract_yrs)
+                else:
+                    bal = v["initial_debt"]
+                    pmt = v["gw"] * annual_pmt_per_gw
+                    for _ in range(age_active):
+                        int_yr = bal * finance_rate_dec
+                        princ_yr = pmt - int_yr
+                        bal = max(0.0, bal - princ_yr)
+                    outstanding = bal
+            else:
+                outstanding = 0.0
         vintage_debts.append(outstanding)
 
-    total_debt = sum(vintage_debts)
+    # Legacy debt — amortizes linearly over contract_yrs from 2025
+    if has_legacy:
+        legacy_outstanding = max(0, legacy_debt * (1 - i / contract_yrs))
+        vintage_debts.append(legacy_outstanding)
+
+    total_debt_yr = sum(vintage_debts)
     ebitda = gw_proj[i] * rev_per_gw * (1 - opex_pct)
-    leverage = total_debt / ebitda if ebitda > 0.01 else 0
+    leverage = total_debt_yr / ebitda if ebitda > 0.01 else 0
 
     cohort_data.append({
         "year": years_proj[i],
         "vintage_debts": vintage_debts,
-        "total_debt": total_debt,
+        "total_debt": total_debt_yr,
         "ebitda": ebitda,
         "leverage": leverage,
-        "new_debt": vintages[len([v for v in vintages if v["deploy_idx"] == i])]["initial_debt"]
-                    if any(v["deploy_idx"] == i for v in vintages) else 0,
     })
 
 col_debt, col_lev = st.columns(2)
@@ -560,13 +575,24 @@ with col_debt:
     fig_debt = go.Figure()
 
     # Stacked bars by vintage
-    vintage_colors = ["#58a6ff", "#3fb950", "#bc8cff", "#d29922", "#f85149", "#8b949e"]
+    vintage_colors = ["#58a6ff", "#3fb950", "#bc8cff", "#d29922", "#f85149", "#8b949e",
+                      "#79c0ff", "#56d364", "#d2a8ff"]
     for vi, v in enumerate(vintages):
         y_vals = [cd["vintage_debts"][vi] for cd in cohort_data]
         fig_debt.add_trace(go.Bar(
             x=years_proj, y=y_vals,
             name=f"{v['label']} ({v['gw']:.1f} GW)",
             marker_color=vintage_colors[vi % len(vintage_colors)],
+        ))
+
+    # Legacy bar
+    if has_legacy:
+        leg_idx = len(vintages)
+        fig_debt.add_trace(go.Bar(
+            x=years_proj,
+            y=[cd["vintage_debts"][leg_idx] for cd in cohort_data],
+            name=f"Legacy/Pipeline (${legacy_debt:.0f}B)",
+            marker_color="#484f58",
         ))
 
     # Total debt line overlay
@@ -635,15 +661,16 @@ with col_lev:
 
 # Summary table
 with st.expander("Debt Cohort Detail"):
-    debt_header = "| Year | Active GW | New GW | New Debt | Total Debt | EBITDA | Debt/EBITDA |"
-    debt_sep = "|------|-----------|--------|----------|------------|--------|-------------|"
+    debt_header = "| Year | Active GW | Drawn GW | Total Debt | Legacy | EBITDA | Debt/EBITDA |"
+    debt_sep = "|------|-----------|----------|------------|--------|--------|-------------|"
     debt_rows = [debt_header, debt_sep]
     for i, cd in enumerate(cohort_data):
-        new_gw = gw_proj[i] if i == 0 else max(0, gw_proj[i] - gw_proj[i - 1])
-        new_debt = new_gw * financed_per_gw
+        # Drawn GW = all vintages with draw_idx <= i
+        drawn_gw = sum(v["gw"] for v in vintages if v["draw_idx"] <= i)
+        leg_val = cd["vintage_debts"][len(vintages)] if has_legacy else 0
         debt_rows.append(
-            f"| {cd['year']} | {gw_proj[i]:.1f} | {new_gw:.2f} | "
-            f"${new_debt:.1f}B | ${cd['total_debt']:.1f}B | "
+            f"| {cd['year']} | {gw_proj[i]:.1f} | {drawn_gw:.1f} | "
+            f"${cd['total_debt']:.0f}B | ${leg_val:.0f}B | "
             f"${cd['ebitda']:.1f}B | {cd['leverage']:.1f}x |"
         )
     st.markdown("\n".join(debt_rows))
