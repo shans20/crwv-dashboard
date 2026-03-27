@@ -33,7 +33,7 @@ st.caption(f"CoreWeave per-GW economics model  |  {datetime.now().strftime('%Y-%
 # ============================================================
 # MODEL ENGINE
 # ============================================================
-def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_rate, opex_pct,
+def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_rate, opex_per_gw_bn,
                   yr1_ramp, ext_rev_pct, share_count_mn,
                   storage_pct, software_pct, n_gw=1.0, interest_only=False,
                   contract_yrs=5, total_yrs=8):
@@ -46,6 +46,10 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
     storage_rev = base_annual_rev * storage_pct
     software_rev = base_annual_rev * software_pct
     total_annual_rev = base_annual_rev + storage_rev + software_rev
+
+    # Opex is a fixed cost per GW (power, lease, staff, maintenance)
+    annual_opex = opex_per_gw_bn * n_gw  # $Bn — doesn't scale with GPU pricing
+    opex_pct = annual_opex / total_annual_rev if total_annual_rev > 0 else 0.25
 
     tcv = total_annual_rev * contract_yrs
     prepay = tcv * prepay_pct
@@ -78,7 +82,7 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
         elif yr <= contract_yrs:
             # Contract years
             rev = total_annual_rev * (yr1_ramp if yr == 1 else 1.0)
-            opex = rev * opex_pct
+            opex = annual_opex  # fixed cost per GW — doesn't drop with J-curve ramp
             if interest_only:
                 remaining = amt_financed * (1 - (yr - 1) / contract_yrs)
                 interest = remaining * finance_rate
@@ -91,9 +95,9 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
                 interest = max(0, outstanding * finance_rate)
             net_cf = rev - opex - debt
         else:
-            # Extension / recontracting years — no debt, opex flat from contract period
+            # Extension / recontracting years — no debt, opex flat (same physical DC)
             rev = total_annual_rev * ext_rev_pct
-            opex = total_annual_rev * opex_pct  # flat: same $ as steady-state contract years
+            opex = annual_opex  # same GW running, same cost
             debt = 0
             interest = 0
             net_cf = rev - opex
@@ -143,7 +147,7 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
     storage_rev_annual = storage_rev
     software_rev_annual = software_rev
 
-    # Contribution margin
+    # Contribution margin (derived from opex/GW vs rev/GW)
     contribution_margin = 1 - opex_pct
 
     return {
@@ -165,6 +169,9 @@ def compute_model(gpu_hr, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, finance_ra
         "interest_pct_tcv": interest_pct_tcv,
         "contribution_margin": contribution_margin,
         "annual_pmt": annual_pmt if amt_financed > 0 else 0,
+        "opex_per_gw": opex_per_gw_bn,
+        "annual_opex": annual_opex,
+        "opex_pct": opex_pct,
     }
 
 
@@ -186,7 +193,7 @@ finance_rate_dec = finance_rate / 100
 interest_only = st.sidebar.checkbox("Interest-only debt structure", value=False)
 
 st.sidebar.markdown("### Operations")
-opex_pct = st.sidebar.slider("Opex % of Revenue", 0.15, 0.40, 0.25, 0.01)
+opex_per_gw_bn = st.sidebar.slider("Opex per GW ($B)", 1.0, 10.0, 4.3, 0.1)
 yr1_ramp = st.sidebar.slider("Yr 1 Ramp (J-curve)", 0.50, 1.00, 0.75, 0.05)
 ext_rev_pct = st.sidebar.slider("Extension Year Revenue %", 0.50, 1.00, 0.75, 0.05)
 
@@ -211,7 +218,7 @@ model = compute_model(
     capex_per_gpu_k=capex_per_gpu_k,
     prepay_pct=prepay_pct,
     finance_rate=finance_rate_dec,
-    opex_pct=opex_pct,
+    opex_per_gw_bn=opex_per_gw_bn,
     yr1_ramp=yr1_ramp,
     ext_rev_pct=ext_rev_pct,
     share_count_mn=share_count,
@@ -374,7 +381,7 @@ with col_waterfall:
     )
     st.plotly_chart(fig_wf, use_container_width=True)
 
-    contribution = (1 - opex_pct) * 100
+    contribution = model["contribution_margin"] * 100
 
 # ============================================================
 # ROW 3: Sensitivity Heatmaps
@@ -391,7 +398,7 @@ with col_payback_sens:
     for rate in rates:
         row = []
         for price in gpu_prices:
-            m = compute_model(price, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, rate/100, opex_pct,
+            m = compute_model(price, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, rate/100, opex_per_gw_bn,
                               yr1_ramp, ext_rev_pct, share_count, storage_pct, software_pct,
                               contract_yrs=contract_yrs, total_yrs=total_yrs)
             row.append(round(m["payback"], 1) if m["payback"] else 10.0)
@@ -422,7 +429,7 @@ with col_return_sens:
     for rate in rates:
         row = []
         for price in gpu_prices:
-            m = compute_model(price, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, rate/100, opex_pct,
+            m = compute_model(price, gpus_per_gw_k, capex_per_gpu_k, prepay_pct, rate/100, opex_per_gw_bn,
                               yr1_ramp, ext_rev_pct, share_count, storage_pct, software_pct,
                               contract_yrs=contract_yrs, total_yrs=total_yrs)
             row.append(round(m["return_contract"] * 100, 0))
@@ -558,7 +565,7 @@ for i in range(len(gw_proj)):
         vintage_debts.append(legacy_outstanding)
 
     total_debt_yr = sum(vintage_debts)
-    ebitda = gw_proj[i] * rev_per_gw * (1 - opex_pct)
+    ebitda = gw_proj[i] * (rev_per_gw - opex_per_gw_bn)
     leverage = total_debt_yr / ebitda if ebitda > 0.01 else 0
 
     cohort_data.append({
