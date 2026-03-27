@@ -186,9 +186,9 @@ gpu_hr = st.sidebar.slider("GPU/hr ($)", 1.50, 8.00, 3.30, 0.10)
 gpus_per_gw_k = st.sidebar.slider("GPUs per GW (thousands)", 300, 1000, 600, 50)
 capex_per_gpu_k = st.sidebar.slider("NVIDIA Capex per GPU ($K)", 30, 120, 60, 5)
 contract_yrs = st.sidebar.slider("Contract Length (yrs)", 3, 8, 5, 1)
-total_yrs = st.sidebar.slider("Total Asset Life (yrs)", contract_yrs, 10, max(contract_yrs, 8), 1)
+total_yrs = st.sidebar.slider("Total Asset Life (yrs)", contract_yrs, 10, max(contract_yrs, 8) if contract_yrs < 8 else 8, 1)
 prepay_pct = st.sidebar.slider("Prepay % of TCV", 0.10, 0.35, 0.20, 0.01)
-finance_rate = st.sidebar.slider("Finance Rate (%)", 3.0, 12.0, 7.0, 0.25)
+finance_rate = st.sidebar.slider("Finance Rate (%)", 3.0, 12.0, 9.5, 0.25)
 finance_rate_dec = finance_rate / 100
 interest_only = st.sidebar.checkbox("Interest-only debt structure", value=False)
 
@@ -198,7 +198,7 @@ yr1_ramp = st.sidebar.slider("Yr 1 Ramp (J-curve)", 0.50, 1.00, 0.75, 0.05)
 ext_rev_pct = st.sidebar.slider("Extension Year Revenue %", 0.50, 1.00, 0.75, 0.05)
 
 st.sidebar.markdown("### Platform Revenue")
-storage_pct = st.sidebar.slider("Storage Revenue (% of GPU)", 0.0, 0.25, 0.02, 0.01)
+storage_pct = st.sidebar.slider("Storage Revenue (% of GPU)", 0.0, 0.25, 0.0, 0.01)
 software_pct = st.sidebar.slider("Software Revenue (% of GPU)", 0.0, 0.20, 0.0, 0.01)
 
 st.sidebar.markdown("### Corporate")
